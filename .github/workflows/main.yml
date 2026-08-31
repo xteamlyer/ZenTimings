@@ -1,0 +1,107 @@
+name: Build
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@main
+      with:
+          submodules: recursive
+          fetch-depth: 0
+
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@main
+
+    - name: Download OpenHardwareMonitorLib
+      shell: pwsh
+      run: |
+        $zipUrl = "https://openhardwaremonitor.org/files/openhardwaremonitor-v0.9.6.zip"
+        $zipPath = "ohm-0.9.6.zip"
+
+        Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
+        Expand-Archive -Path $zipPath -DestinationPath "ohm-old"
+
+        $dll = Get-ChildItem -Path "ohm-old" -Recurse -Filter "OpenHardwareMonitorLib.dll" | Select-Object -First 1 -ExpandProperty FullName
+
+        if ($dll) {
+          New-Item -Path "Common" -ItemType Directory -Force | Out-Null
+          Copy-Item $dll "Common\OpenHardwareMonitorLib.dll" -Force
+          Write-Host "Copied compatible OpenHardwareMonitorLib.dll (v0.9.6) to Common/"
+        } else {
+          Write-Error "DLL not found in v0.9.6 archive!"
+          exit 1
+        }
+    - name: Restore NuGet packages for solution
+      run: nuget restore WPF/ZenTimings.sln
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@main
+
+    - name: Install .NET Framework 4.5 reference assemblies
+      shell: pwsh
+      run: |
+        $pkg = "Microsoft.NETFramework.ReferenceAssemblies.net45"
+        $ver = "1.0.3"
+        $url = "https://www.nuget.org/api/v2/package/$pkg/$ver"
+
+        Invoke-WebRequest -Uri $url -OutFile "$pkg.zip"
+        Expand-Archive -Path "$pkg.zip" -DestinationPath "$pkg"
+
+        $source = Resolve-Path "$pkg\build\.NETFramework\v4.5"
+        $target = "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.5"
+
+        if (-not (Test-Path $target)) {
+          New-Item -Path $target -ItemType Directory -Force | Out-Null
+        }
+
+        Copy-Item -Path "$source\*" -Destination $target -Recurse -Force
+        Write-Host ".NET 4.5 refs copied"
+
+    # - name: Build main solution (skip legacy issues)
+    #   run: |
+    #     msbuild WPF/ZenTimings.sln `
+    #       /p:Configuration=Release `
+    #       /p:Platform="Any CPU" `
+    #       /m `
+    #       /p:TreatWarningsAsErrors=false `
+    #       /clp:ErrorsOnly `
+    #       /t:ZenTimings
+    #   continue-on-error: true
+
+    - name: Build main solution
+      run: |
+        msbuild WPF/ZenTimings.sln `
+          /p:Configuration=Release `
+          /p:Platform="Any CPU" `
+          /m `
+          /p:TreatWarningsAsErrors=false `
+          /clp:ErrorsOnly
+      continue-on-error: true
+
+    - name: Build OHWMPlugin with explicit OutputPath
+      run: |
+        msbuild OHWMPlugin\OHWMPlugin.csproj `
+          /p:Configuration=Release `
+          /p:Platform="Any CPU" `
+          /p:OutputPath=bin\Release\ `
+          /p:BaseOutputPath=bin\Release\ `
+          /p:RestorePackagesConfig=true `
+          /restore `
+          /m
+      continue-on-error: true
+
+    - name: Upload artifacts
+      if: always()
+      uses: actions/upload-artifact@main
+      with:
+        name: ZenTimings-Build
+        path: |
+          WPF/bin/Release/
+          OHWMPlugin/bin/Release/
+          Common/OpenHardwareMonitorLib.dll
+        if-no-files-found: warn

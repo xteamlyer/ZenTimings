@@ -34,7 +34,7 @@
 
             <StackPanel Orientation="Vertical" Margin="15,15,5,15" Grid.ColumnSpan="6" Grid.Row="0" Width="424">
                 <!-- TextBlock Text="Changelog" FontSize="14" FontWeight="Bold" Style="{DynamicResource ValueStyles}" Height="auto" HorizontalAlignment="Left" /-->
-                <TextBlock Text="v140" FontSize="13" Style="{DynamicResource ValueStyles}" Height="auto" HorizontalAlignment="Left" Margin="0" />
+                <TextBlock Text="{Binding Version}" FontSize="13" Style="{DynamicResource ValueStyles}" Height="auto" HorizontalAlignment="Left" Margin="0" />
 
                 <TextBlock Text="" />
                 <TextBlock Text=" - Added CCD_L timings for DDR5 in advanced mode" TextWrapping="WrapWithOverflow" />
@@ -50,6 +50,7 @@
                 <TextBlock Text=" - Fixed sensors window alarm colors not recording max values" TextWrapping="WrapWithOverflow" />
                 <TextBlock Text=" - Fixed incorrect read function used for SVI2 planes (Zen3 and earlier)" TextWrapping="WrapWithOverflow" />
                 <TextBlock Text=" - Fixed incorrect handling of corner radius (W11)" TextWrapping="WrapWithOverflow" />
+                <TextBlock Text=" - Fixed memory leak in Debug window" TextWrapping="WrapWithOverflow" />
                 <TextBlock Text=" - Unmatched Hynix dies are now displayed as 'Unknown' instead of an incorrect value" TextWrapping="WrapWithOverflow" />
                 <TextBlock Text=" - Removed the maximize button when maximizing is not applicable" TextWrapping="WrapWithOverflow" />
                 <TextBlock Text=" - Added SuperIO hardware support, ported from LibreHardwareMonitor" TextWrapping="WrapWithOverflow" />

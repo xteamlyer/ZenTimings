@@ -1,4 +1,5 @@
 ﻿using System.Diagnostics;
+using System.Reflection;
 
 namespace ZenTimings.Windows
 {
@@ -16,7 +17,23 @@ namespace ZenTimings.Windows
             string changeLogPath = pagesFolder.FullName + "\\whatsnew.html";
             Browser1.Source = new Uri(changeLogPath);
             */
+
+            this.DataContext = new
+            {
+#if BETA
+                Version = $"{Version} - beta",
+#else
+                Version,
+#endif
+            };
         }
+
+        private string Version =>
+            Assembly.GetExecutingAssembly()
+                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                    .InformationalVersion
+            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+            ?? string.Empty;
 
         private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
         {

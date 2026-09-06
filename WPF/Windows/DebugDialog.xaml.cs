@@ -504,6 +504,7 @@ namespace ZenTimings.Windows
             {
                 textBoxDebugOutput.Text = result.ToString();
                 SetControlsState();
+                MinimizeFootprint();
             }));
         }
 

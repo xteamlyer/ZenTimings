@@ -281,16 +281,16 @@ namespace ZenTimings.ViewModels
             // APOB
             if (CpuSingleton.Instance.info.apob.IsAvailable)
             {
-                //ApobMainData = CpuSingleton.Instance.info.apob.Data;
-                //ApobExtendedData = CpuSingleton.Instance.info.apob?.ExtendedData;
-                //CcdlData = CpuSingleton.Instance.info.apob.CcdlData;
+                ApobMainData = CpuSingleton.Instance.info.apob.Data;
+                ApobExtendedData = CpuSingleton.Instance.info.apob?.ExtendedData;
+                CcdlData = CpuSingleton.Instance.info.apob.CcdlData;
 
                 // Uncomment the following lines to test APOB parsing from a debug report file instead of live data.
-                string text = File.ReadAllText("debug_report.txt");
-                Apob testApob = Apob.CreateFromDebugReport(text);
-                ApobMainData = testApob.Data;
-                ApobExtendedData = testApob?.ExtendedData;
-                CcdlData = testApob.CcdlData;
+                //string text = File.ReadAllText("debug_report.txt");
+                //Apob testApob = Apob.CreateFromDebugReport(text);
+                //ApobMainData = testApob.Data;
+                //ApobExtendedData = testApob?.ExtendedData;
+                //CcdlData = testApob.CcdlData;
 
                 ApobData = MergeApobData(ApobMainData, ApobExtendedData);
             }
@@ -393,7 +393,7 @@ namespace ZenTimings.ViewModels
 
         private ApobData MergeApobData(ApobData main, ApobData extended)
         {
-            if (extended == null || extended.ProcOdt == null || !extended.ProcOdt.RawValue.Equals(main.ProcOdt.RawValue))
+            if (extended == null)
                 return main;
 
             var result = main;

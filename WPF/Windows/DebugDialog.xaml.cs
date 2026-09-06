@@ -4,12 +4,15 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Management;
-using System.Reflection;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using ZenStates.Core;
+using ZenStates.Core.Hardware;
+using ZenStates.Core.Hardware.DRAM.DDR5.Spd;
+using ZenTimings.Helpers;
 using Application = System.Windows.Application;
-using MessageBox = AdonisUI.Controls.MessageBox;
+using DRAM = ZenStates.Core.Hardware.DRAM;
 using SaveFileDialog = Microsoft.Win32.SaveFileDialog;
 
 namespace ZenTimings.Windows
@@ -23,16 +26,14 @@ namespace ZenTimings.Windows
         private readonly BiosMemController BMC;
         private readonly Cpu cpu;
 
-        private readonly ZenStates.Core.DRAM.MemoryConfig memoryConfig;
+        private readonly DRAM.MemoryConfig memoryConfig;
         //private readonly List<MemoryModule> modules;
 
         //private readonly uint baseAddress;
         private readonly string wmiAMDACPI = "AMD_ACPI";
         private readonly string wmiScope = "root\\wmi";
-        private ManagementObject classInstance;
         private string instanceName;
-        private ManagementBaseObject pack;
-        private string result = "";
+        private readonly StringBuilder result = new StringBuilder();
 
         public DebugDialog(BiosMemController biosMemCtrl, AsusWMI asusWmi)
         {
@@ -71,47 +72,47 @@ namespace ZenTimings.Windows
         {
             try
             {
-                classInstance = new ManagementObject(wmiScope,
-                    $"{wmiAMDACPI}.InstanceName='{instanceName}'",
-                    null);
-
-                // Get function names with their IDs
-                string[] functionObjects = { "GetObjectID", "GetObjectID2" };
-                var index = 1;
-
-                foreach (var functionObject in functionObjects)
+                using (var classInstance = new ManagementObject(wmiScope, $"{wmiAMDACPI}.InstanceName='{instanceName}'", null))
                 {
-                    AddHeading($"WMI: Bios Functions {index}");
+                    // Get function names with their IDs
+                    string[] functionObjects = { "GetObjectID", "GetObjectID2" };
+                    var index = 1;
 
-                    try
+                    foreach (var functionObject in functionObjects)
                     {
-                        pack = WMI.InvokeMethodAndGetValue(classInstance, functionObject, "pack", null, 0);
+                        AddHeading($"WMI: Bios Functions {index}");
 
-                        if (pack != null)
+                        try
                         {
-                            var ID = (uint[])pack.GetPropertyValue("ID");
-                            var IDString = (string[])pack.GetPropertyValue("IDString");
-                            var Length = (byte)pack.GetPropertyValue("Length");
-
-                            for (var i = 0; i < Length; ++i)
+                            using (var pack = WMI.InvokeMethodAndGetValue(classInstance, functionObject, "pack", null, 0))
                             {
-                                if (IDString[i] == "")
-                                    break;
-                                AddLine($"{IDString[i] + ":",-30}{ID[i]:X8}");
+                                if (pack != null)
+                                {
+                                    var ID = (uint[])pack.GetPropertyValue("ID");
+                                    var IDString = (string[])pack.GetPropertyValue("IDString");
+                                    var Length = (byte)pack.GetPropertyValue("Length");
+
+                                    for (var i = 0; i < Length; ++i)
+                                    {
+                                        if (IDString[i] == "")
+                                            break;
+                                        AddLine($"{IDString[i] + ":",-30}{ID[i]:X8}");
+                                    }
+                                }
+                                else
+                                {
+                                    AddLine("<FAILED>");
+                                }
                             }
                         }
-                        else
+                        catch
                         {
-                            AddLine("<FAILED>");
+                            // ignored
                         }
-                    }
-                    catch
-                    {
-                        // ignored
-                    }
 
-                    index++;
-                    AddLine();
+                        index++;
+                        AddLine();
+                    }
                 }
             }
             catch
@@ -129,24 +130,19 @@ namespace ZenTimings.Windows
                 Environment.NewLine +
                 "######################################################" +
                 Environment.NewLine;
-            result += h;
+            result.Append(h);
         }
 
         private void AddLine(string row = "")
         {
-            result += row + Environment.NewLine;
+            result.Append(row + Environment.NewLine);
         }
 
         private void PrintChannels()
         {
-            if (!Mutexes.WaitPciBus(5000))
-            {
-                throw new Exception("Timeout waiting for PCI bus mutex");
-            }
-
             try
             {
-                uint channelsPerDimm = 1; // memoryConfig.Type >= ZenStates.Core.DRAM.MemoryConfig.MemType.DDR5 ? 2u : 1u;
+                uint channelsPerDimm = 1; // memoryConfig.Type >= DRAM.MemoryConfig.MemType.DDR5 ? 2u : 1u;
                 AddHeading("Memory Channels Info");
 
                 AddLine("-- UMC Configuration");
@@ -175,7 +171,7 @@ namespace ZenTimings.Windows
                         {
                             AddLine("-- UMC Registers");
                             var startReg = offset | 0x50000;
-                            var endReg = offset | 0x50300;
+                            var endReg = offset | 0x50FFC;
                             while (startReg <= endReg)
                             {
                                 var data = cpu.ReadDword(startReg);
@@ -189,26 +185,48 @@ namespace ZenTimings.Windows
                         AddLine($"Channel{i / channelsPerDimm}: <FAILED>");
                     }
                 }
-                AddLine();
             }
-            finally
+            catch (Exception ex)
             {
-                Mutexes.ReleasePciBus();
+                AddLine($"<FAILED: {ex.Message}>");
             }
+
+            AddLine();
+        }
+
+        private bool PrintRawBinaryData(byte[] data)
+        {
+            if (data != null && typeof(byte[]).IsAssignableFrom(data.GetType()))
+            {
+                for (var i = 0; i < data.Length; i += 16)
+                {
+                    var hexLine = "";
+                    for (var j = 0; j < 16 && i + j < data.Length; j++)
+                    {
+                        hexLine += $"{data[i + j]:X2}";
+                        if (j < 15) hexLine += " ";
+                    }
+                    //AddLine($"0x{i:X8}: {hexLine}");
+                    AddLine($"{hexLine}");
+                }
+                return true;
+            }
+            return false;
         }
 
         private void Debug()
         {
             Application.Current.Dispatcher.Invoke(new Action(() => { SetControlsState(false); }));
 
-            result =
+            result.Clear();
+            result.Append(
                 $"{System.Windows.Forms.Application.ProductName} {System.Windows.Forms.Application.ProductVersion} Debug Report" +
                 Environment.NewLine +
                 $"{"Core Version: "}{cpu.Version}" +
                 Environment.NewLine +
                 $"{"PawnIO Version: "}{DriverHelper.Version}" +
                 Environment.NewLine +
-                Environment.NewLine;
+                Environment.NewLine);
 
             var type = cpu.systemInfo.GetType();
             var properties = type.GetProperties();
@@ -220,10 +238,13 @@ namespace ZenTimings.Windows
 
                 foreach (var property in properties)
                 {
+                    if (property.Name == "Hardware" || property.Name == "SensorGroups")
+                        continue;
+
                     if (property.Name == "CpuId" || property.Name == "PatchLevel" || property.Name == "SmuTableVersion")
                         AddLine($"{property.Name + ":",-19}{property.GetValue(cpu.systemInfo, null):X8}");
                     else if (property.Name == "SmuVersion")
-                        AddLine($"{property.Name + ":",-19}{cpu.systemInfo.SmuVersionString}");
+                        AddLine($"{property.Name + ":",-19}{cpu.systemInfo.SmuVersion}");
                     else if (property.Name == "Model" || property.Name == "ExtendedModel" || property.Name == "BaseModel")
                         AddLine($"{property.Name + ":",-19}{property.GetValue(cpu.systemInfo, null)} (0x{property.GetValue(cpu.systemInfo, null):X})");
                     else if (property.Name != "SMBios")
@@ -247,7 +268,7 @@ namespace ZenTimings.Windows
             {
                 AddLine($"{module.BankLabel} | {module.DeviceLocator}");
                 AddLine($"-- Slot: {module.Slot}");
-                if (module.Rank == ZenStates.Core.DRAM.MemRank.DR)
+                if (module.Rank == DRAM.MemRank.DR)
                     AddLine("-- Dual Rank");
                 else
                     AddLine("-- Single Rank");
@@ -258,7 +279,7 @@ namespace ZenTimings.Windows
                 AddLine();
             }
 
-            if (cpu.memoryConfig.Type == ZenStates.Core.DRAM.MemType.DDR5)
+            if (cpu.memoryConfig.Type == DRAM.MemType.DDR5)
             {
                 AddHeading("SMBUS Memory Modules");
                 AddLine();
@@ -283,7 +304,8 @@ namespace ZenTimings.Windows
                 properties = type.GetProperties();
 
                 foreach (var property in properties)
-                    AddLine($"{property.Name + ":",-18}{memoryConfig.Timings[0].Value[property.Name]}");
+                    if (property.Name != "Item")
+                        AddLine($"{property.Name + ":",-28}{memoryConfig.Timings[0].Value[property.Name]}");
             }
             catch
             {
@@ -293,166 +315,10 @@ namespace ZenTimings.Windows
             AddLine();
 
             AddHeading("APOB");
-            AddLine();
-            try
-            {
-                if (cpu.info.apob.IsAvailable)
-                {
-                    AddLine($"-- Address: 0x{cpu.info.apob.Address:X8}");
-                    AddLine($"-- Main Data Offset: 0x{cpu.info.apob.DataOffset:X8}");
-                    AddLine($"-- Ext. Data Offset: 0x{cpu.info.apob.ExtendedDataOffset:X8}");
-                    AddLine();
-                    AddLine("-- Header ---------------------------------------");
+            AddLine(cpu.info.apob.GetReport());
 
-                    properties = cpu.info.apob?.Header.GetType().GetProperties();
-
-                    foreach (PropertyInfo property in properties)
-                    {
-                        object value = property.GetValue(cpu.info.apob.Header);
-                        AddLine($"{property.Name + ":",-20}{value}");
-                    }
-
-                    AddLine();
-                    AddLine("-- Data ---------------------------------------");
-                    if (cpu.info.apob?.Data != null)
-                    {
-                        properties = cpu.info.apob.Data.GetType().GetProperties();
-
-                        foreach (PropertyInfo property in properties)
-                        {
-                            object value = property.GetValue(cpu.info.apob.Data);
-                            var rawValue = (value as EncodedValueBase)?.RawValue.ToString() ?? "null";
-                            AddLine($"{property.Name + ":",-20}{value ?? "N/A",-20}({rawValue})");
-                        }
-                    }
-                    else
-                    {
-                        AddLine("<APOB table data not available>");
-                    }
-
-                    AddLine();
-                    AddHeading("APOB: Raw");
-                    AddLine();
-                    AddLine("-- Raw Data -----------------------------------");
-                    try
-                    {
-                        if (cpu.info.apob?.RawData != null)
-                        {
-                            for (var i = 0; i < cpu.info.apob.RawData.Length; i += 16)
-                            {
-                                var hexLine = "";
-                                for (var j = 0; j < 16 && i + j < cpu.info.apob.RawData.Length; j++)
-                                {
-                                    hexLine += $"{cpu.info.apob.RawData[i + j]:X2}";
-                                    if (j < 15) hexLine += " ";
-                                }
-                                //AddLine($"0x{i:X8}: {hexLine}");
-                                AddLine($"{hexLine}");
-                            }
-                        }
-                        else
-                        {
-                            AddLine("<APOB raw data not available>");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        AddLine("<FAILED>");
-                        AddLine(ex.Message);
-                    }
-                    AddLine();
-
-                    AddLine("-- Raw Extended Data --------------------------");
-                    try
-                    {
-                        if (cpu.info.apob?.RawData != null)
-                        {
-                            for (var i = 0; i < cpu.info.apob.RawExtendedData.Length; i += 16)
-                            {
-                                var hexLine = "";
-                                for (var j = 0; j < 16 && i + j < cpu.info.apob.RawExtendedData.Length; j++)
-                                {
-                                    hexLine += $"{cpu.info.apob.RawExtendedData[i + j]:X2}";
-                                    if (j < 15) hexLine += " ";
-                                }
-                                //AddLine($"0x{i:X8}: {hexLine}");
-                                AddLine($"{hexLine}");
-                            }
-                        }
-                        else
-                        {
-                            AddLine("<APOB raw extended data not available>");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        AddLine("<FAILED>");
-                        AddLine(ex.Message);
-                    }
-                    AddLine();
-                }
-                else
-                {
-                    AddLine("<APOB table not available>");
-                }
-            }
-            catch (Exception ex)
-            {
-                AddLine("<FAILED>");
-                AddLine(ex.Message);
-            }
-
-            AddLine();
-
-            // AOD Table
-            AddHeading("ACPI: AOD Table Header");
-            try
-            {
-                var aodAcpiTableHeader = cpu.info.aod.Table.AcpiTable.GetValueOrDefault().Header;
-                type = aodAcpiTableHeader.GetType();
-
-                foreach (FieldInfo field in type.GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
-                {
-                    AddLine($"{field.Name + ":",-19}{field.GetValue(aodAcpiTableHeader)}");
-                }
-            }
-            catch
-            {
-                AddLine("<FAILED>");
-            }
-
-            AddLine();
-            AddHeading("ACPI: AOD Table Data");
-            try
-            {
-                properties = cpu.info.aod.Table.Data.GetType().GetProperties();
-
-                foreach (PropertyInfo property in properties)
-                {
-                    object value = property.GetValue(cpu.info.aod.Table.Data);
-                    AddLine($"{property.Name + ":",-19}{value}");
-                }
-            }
-            catch (Exception ex)
-            {
-                AddLine("<FAILED>");
-                AddLine(ex.Message);
-            }
-
-            AddLine();
-
-            AddHeading("ACPI: Raw AOD Table");
-            try
-            {
-                for (var i = 0; i < cpu.info.aod.Table.RawAodTable.Length; i++)
-                    AddLine($"Index {i:D3}: {cpu.info.aod.Table.RawAodTable[i]:X2} ({cpu.info.aod.Table.RawAodTable[i]})");
-            }
-            catch
-            {
-                AddLine("<FAILED>");
-            }
-
-            AddLine();
+            AddHeading("AOD");
+            AddLine(cpu.info.aod.GetReport());
 
             // Configured DRAM memory controller settings from BIOS
             AddHeading("BIOS: Memory Controller Config");
@@ -516,6 +382,21 @@ namespace ZenTimings.Windows
                 AddLine(ex.Message);
             }
 
+            AddLine();
+
+            AddHeading("SuperIO");
+            foreach (var hardware in cpu.systemInfo.Hardware)
+            {
+                if (hardware.HardwareType == HardwareType.SuperIO)
+                {
+                    var report = hardware.GetReport();
+                    AddLine(report);
+                }
+            }
+            AddLine();
+
+            AddHeading("SMBios");
+            AddLine(SystemInfo.SMBios.GetReport());
             AddLine();
 
             // All WMI classes in root namespace
@@ -621,8 +502,9 @@ namespace ZenTimings.Windows
 
             Application.Current.Dispatcher.Invoke(new Action(() =>
             {
-                textBoxDebugOutput.Text = result;
+                textBoxDebugOutput.Text = result.ToString();
                 SetControlsState();
+                MinimizeFootprint();
             }));
         }
 

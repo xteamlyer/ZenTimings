@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
+using ZenTimings.Helpers;
 
 namespace ZenTimings.Windows
 {
@@ -37,12 +38,16 @@ namespace ZenTimings.Windows
                 Assembly.GetExecutingAssembly(),
                 typeof(AssemblyCopyrightAttribute), false)).Copyright;
 
+            var AssemblyInformationalVersion = Assembly.GetExecutingAssembly()
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion ?? "Unknown";
+
 
             InitializeComponent();
 
             //this.Title = string.Format("About {0}", AssemblyTitle);
             this.labelProductName.Content = AssemblyProduct;
-            this.labelVersion.Text = $"Version {AssemblyVersion}";
+            this.labelVersion.Text = $"Version {AssemblyInformationalVersion}";
             this.labelCopyright.Text = AssemblyCopyright;
             this.labelCompanyName.Text = AssemblyDescription;
 

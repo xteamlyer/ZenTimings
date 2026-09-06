@@ -1,6 +1,6 @@
 using System;
-using ZenStates.Core;
-using ZenStates.Core.DRAM;
+using ZenStates.Core.Hardware;
+using ZenStates.Core.Hardware.DRAM;
 
 namespace ZenTimings
 {
@@ -200,7 +200,7 @@ namespace ZenTimings
                     return $"{(char)('A' + dieIndex - 1)}-Die";
             }
 
-            return $"0x{stepping:X2}";
+            return $"(Unknown 0x{stepping:X2})";
         }
 
         internal static string GetCpuNameString(SystemInfo info)

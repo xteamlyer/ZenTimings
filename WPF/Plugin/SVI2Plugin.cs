@@ -1,8 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using ZenStates.Core;
 using ZenStates.Core.Drivers;
-using ZenTimings.Common;
+using ZenStates.Core.Hardware;
+using ZenStates.Core.Hardware.MutexLock;
 
 namespace ZenTimings.Plugin
 {
@@ -35,8 +37,8 @@ namespace ZenTimings.Plugin
             {
                 Sensors = new List<Sensor>
                 {
-                    new Sensor("VSOC", 0),
-                    new Sensor("VCORE", 1),
+                    new Sensor("VSOC", 0, SensorType.Voltage),
+                    new Sensor("VCORE", 1, SensorType.Voltage),
                 };
             }
         }
@@ -54,8 +56,8 @@ namespace ZenTimings.Plugin
 
                 if (timeout > 0)
                 {
-                    UpdateSensorValue(socPlaneValue, Sensors[0]);
-                    UpdateSensorValue(vcorePlaneValue, Sensors[1]);
+                    UpdateSensorValue(socPlaneValue, Sensors[0].Index);
+                    UpdateSensorValue(vcorePlaneValue, Sensors[1].Index);
 
                     return true;
                 }
@@ -69,21 +71,19 @@ namespace ZenTimings.Plugin
             socPlaneValue = 0;
             vcorePlaneValue = 0;
 
-            if (Mutexes.WaitPciBus(10))
+            using (new PciBusLock())
             {
-                socPlaneValue = cpuInstance.ReadDword(cpuInstance.info.svi2.socAddress);
-                vcorePlaneValue = cpuInstance.ReadDword(cpuInstance.info.svi2.coreAddress);
-
-                Mutexes.ReleasePciBus();
+                socPlaneValue = cpuInstance.ReadDwordNoLock(cpuInstance.info.svi2.socAddress);
+                vcorePlaneValue = cpuInstance.ReadDwordNoLock(cpuInstance.info.svi2.coreAddress);
             }
         }
 
-        private void UpdateSensorValue(uint planeValue, Sensor sensor)
+        private void UpdateSensorValue(uint planeValue, int sensorIndex)
         {
             uint vid = (planeValue >> 16) & 0xFF;
-            sensor.Value = Convert.ToSingle(Utils.VidToVoltage(vid));
+            Sensors[sensorIndex].Value = (float)Utils.VidToVoltage(vid);
 
-            Console.WriteLine($"{sensor.Name}: {sensor.Min} {sensor.Max}");
+            Debug.WriteLine($"{Sensors[sensorIndex].Name}: {Sensors[sensorIndex].Min} {Sensors[sensorIndex].Max}");
         }
 
         public void Open()

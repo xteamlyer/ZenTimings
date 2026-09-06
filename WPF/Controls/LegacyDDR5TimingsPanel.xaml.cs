@@ -1,6 +1,7 @@
 ﻿using System.Windows;
 using System.Windows.Controls;
 using ZenStates.Core;
+using ZenStates.Core.Hardware.Aod;
 
 namespace ZenTimings.Controls
 {
@@ -25,7 +26,7 @@ namespace ZenTimings.Controls
                 //labelMemVdd.IsEnabled = true;
                 //labelMemVddq.IsEnabled = true;
                 //labelMemVpp.IsEnabled = true;
-                labelApuVddio.IsEnabled = true;
+                //labelApuVddio.IsEnabled = true;
 
                 labelProcCaDs.IsEnabled = true;
                 labelProcDqDs.IsEnabled = true;
@@ -39,7 +40,7 @@ namespace ZenTimings.Controls
                 //textBoxMemVddio.Text = Data.MemVddio.ToString();
                 //textBoxMemVddq.Text = Data.MemVddq.ToString();
                 //textBoxMemVpp.Text = Data.MemVpp.ToString();
-                textBoxApuVddio.Text = Data.ApuVddio.ToString();
+                //textBoxApuVddio.Text = Data.ApuVddio.ToString();
 
                 try
                 {

@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
-using ZenTimings.Common;
+using ZenStates.Core.Hardware;
 
 namespace ZenTimings.Plugin
 {
@@ -31,6 +32,7 @@ namespace ZenTimings.Plugin
             }
             catch (Exception ex)
             {
+                Debug.WriteLine(ex);
                 Close();
             }
         }
@@ -66,11 +68,11 @@ namespace ZenTimings.Plugin
                         {
                             if (GetPropValue(subsensor, "SensorType").ToString() == "Voltage")
                             {
-                                // Console.WriteLine($"----Index: {GetPropValue(subsensor, "Index")}, {GetPropValue(subsensor, "SensorType")}, Name: {GetPropValue(subsensor, "Name")}, Value: {GetPropValue(subsensor, "Value")}");
+                                // Debug.WriteLine($"----Index: {GetPropValue(subsensor, "Index")}, {GetPropValue(subsensor, "SensorType")}, Name: {GetPropValue(subsensor, "Name")}, Value: {GetPropValue(subsensor, "Value")}");
                                 try
                                 {
                                     Sensors.Add(
-                                        new Sensor((string)GetPropValue(subsensor, "Name"), (int)GetPropValue(subsensor, "Index"))
+                                        new Sensor((string)GetPropValue(subsensor, "Name"), (int)GetPropValue(subsensor, "Index"), SensorType.Voltage)
                                         {
                                             Value = GetPropValue(subsensor, "Value") ?? 0,
                                         }

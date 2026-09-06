@@ -1,8 +1,11 @@
 using AdonisUI;
 using System;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using ZenTimings.Helpers;
+using static ZenTimings.Helpers.DriverCleaner;
 
 namespace ZenTimings
 {
@@ -11,7 +14,7 @@ namespace ZenTimings
     {
         public event PropertyChangedEventHandler PropertyChanged;
         public const int VersionMajor = 1;
-        public const int VersionMinor = 13;
+        public const int VersionMinor = 15;
 
         private static readonly string Filename = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "settings.xml");
         public const string AGESA_UNKNOWN = "Unknown";
@@ -74,12 +77,12 @@ namespace ZenTimings
             {
                 if (File.Exists(Filename))
                 {
-                    return XmlUtils.DeserializeFromXml<AppSettings>(Filename);
+                    return XmlUtils.DeserializeFromXmlFile<AppSettings>(Filename);
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                Debug.WriteLine(ex.Message);
                 MessageBox.Show(
                     "Invalid or outdated settings file!\nSettings will be reset to defaults and any custom settings will be lost.",
                     "Error",
@@ -104,7 +107,7 @@ namespace ZenTimings
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                Debug.WriteLine(ex.Message);
                 AdonisUI.Controls.MessageBox.Show(
                     "Could not save settings to file!",
                     "Error",
@@ -171,22 +174,27 @@ namespace ZenTimings
         public ScreenshotType ScreenshotMode { get; set; } = ScreenshotType.Window;
         public string ScreenshotSaveLocation { get; set; } = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Screenshots");
         public bool CheckForUpdates { get; set; } = true;
+        public bool ParticipateInBetaUpdates { get; set; } = false;
         public string UpdaterSkippedVersion { get; set; } = "";
         public string DriverUpdateLastSkippedVersion { get; set; } = "";
         public string UpdaterRemindLaterAt { get; set; } = "";
         public bool MinimizeToTray { get; set; }
         public bool SaveWindowPosition { get; set; } = true;
+        public bool AutostartWithWindows { get; set; }
+        public int AutostartDelaySeconds { get; set; } = 12;
+        public bool StartMinimized { get; set; }
         public bool AutoUninstallDriver { get; set; } = true;
+        public int AutoUninstallDriverNotificationLevel { get; set; } = (int)NotificationLevel.All;
         public double WindowLeft { get; set; } = -1;
         public double WindowTop { get; set; } = -1;
         public double SysInfoWindowLeft { get; set; } = -1;
         public double SysInfoWindowTop { get; set; } = -1;
         public double SysInfoWindowWidth { get; set; }
         public double SysInfoWindowHeight { get; set; }
-        public double TelemetryWindowLeft { get; set; } = -1;
-        public double TelemetryWindowTop { get; set; } = -1;
-        public double TelemetryWindowWidth { get; set; }
-        public double TelemetryWindowHeight { get; set; }
+        public double SensorsWindowLeft { get; set; } = -1;
+        public double SensorsWindowTop { get; set; } = -1;
+        public double SensorsWindowWidth { get; set; }
+        public double SensorsWindowHeight { get; set; }
         public string NotifiedChangelog { get; set; } = "";
         public bool SingleInstance { get; set; } = true;
         public bool AutoOpenTelemetry { get; set; } = false;

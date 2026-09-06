@@ -1,7 +1,9 @@
 ﻿using AdonisUI.Controls;
 using System;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Media;
+using ZenStates.Core.OHWM;
 
 namespace ZenTimings
 {
@@ -26,9 +28,26 @@ namespace ZenTimings
             Loaded += ThemedAdonisWindow_Loaded;
         }
 
+        protected void MinimizeFootprint()
+        {
+            InteropMethods.EmptyWorkingSet(Process.GetCurrentProcess().Handle);
+        }
+
         private void ThemedAdonisWindow_Loaded(object sender, RoutedEventArgs e)
         {
             ApplyNativeBorderFromTheme();
+            MinimizeFootprint();
+        }
+
+        public override void OnApplyTemplate()
+        {
+            base.OnApplyTemplate();
+            if (ResizeMode == ResizeMode.CanMinimize || ResizeMode == ResizeMode.NoResize)
+            {
+                var maximizeButton = GetTemplateChild("PART_MaximizeRestoreButton") as System.Windows.Controls.Button;
+                if (maximizeButton != null)
+                    maximizeButton.Visibility = Visibility.Collapsed;
+            }
         }
 
         protected override void OnSourceInitialized(EventArgs e)

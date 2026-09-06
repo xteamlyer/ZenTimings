@@ -1,32 +1,23 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
-using System.Windows;
 using System.Xml.Serialization;
 using ZenStates.Core;
-using ZenStates.Core.DRAM;
+using ZenStates.Core.Hardware;
+using ZenStates.Core.Hardware.Apob;
+using ZenStates.Core.Hardware.DRAM;
+using ZenStates.Core.Hardware.DRAM.DDR5.Pmic;
+using ZenTimings.Helpers;
 using ZenTimings.Plugin;
 
 namespace ZenTimings.ViewModels
 {
-    public class MainViewModel : INotifyPropertyChanged
+    public class MainViewModel : ObservableObject
     {
-        public event PropertyChangedEventHandler PropertyChanged;
-
-        protected void OnPropertyChanged([CallerMemberName] string name = null)
-        {
-            Application.Current.Dispatcher.Invoke(() =>
-            {
-                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
-            });
-        }
-
-        private static string AGESA_SEARCHING = "Searching for AGESA version...";
+        private static readonly string AGESA_SEARCHING = "Searching for AGESA version...";
 
         private readonly string SmuVersion;
 
@@ -36,6 +27,9 @@ namespace ZenTimings.ViewModels
             get => _timings;
             set
             {
+                // Not using SetProperty's equality short-circuit here: MemoryFrequency must be
+                // recomputed from the new timings object every time this is assigned, even if a
+                // future caller happened to pass back an equal instance.
                 _timings = value;
                 MemoryFrequency = value.Frequency;
                 OnPropertyChanged();
@@ -50,7 +44,7 @@ namespace ZenTimings.ViewModels
         public string MotherboardInfo
         {
             get => _motherboardInfo;
-            set { _motherboardInfo = value; OnPropertyChanged(); }
+            set => SetProperty(ref _motherboardInfo, value);
         }
 
         private string _agesaVersion = AGESA_SEARCHING;
@@ -71,6 +65,7 @@ namespace ZenTimings.ViewModels
                 }
                 IsAgesaVersionVisible = !string.IsNullOrEmpty(_agesaVersion);
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(IsSearchingForAgesaVersion));
             }
         }
 
@@ -78,7 +73,7 @@ namespace ZenTimings.ViewModels
         public bool IsAgesaVersionVisible
         {
             get => _isAgesaVersionVisible;
-            set { _isAgesaVersionVisible = value; OnPropertyChanged(); }
+            set => SetProperty(ref _isAgesaVersionVisible, value);
         }
 
         public bool IsSearchingForAgesaVersion => _agesaVersion == AGESA_SEARCHING;
@@ -91,9 +86,8 @@ namespace ZenTimings.ViewModels
             get => _memoryFrequency;
             set
             {
-                _memoryFrequency = value;
-                MemoryFrequencyString = $"{Math.Floor(MemoryFrequency)} MT/s";
-                OnPropertyChanged();
+                if (SetProperty(ref _memoryFrequency, value))
+                    MemoryFrequencyString = $"{Math.Floor(value)} MT/s";
             }
         }
 
@@ -101,7 +95,7 @@ namespace ZenTimings.ViewModels
         public string MemoryFrequencyString
         {
             get => _memoryFrequencyString;
-            set { _memoryFrequencyString = value; OnPropertyChanged(); }
+            set => SetProperty(ref _memoryFrequencyString, value);
         }
         public MemType MemoryType { get; }
         public bool IsDimmTelemetryAvailable => Settings.AdvancedMode && MemoryType == MemType.DDR5;
@@ -156,51 +150,88 @@ namespace ZenTimings.ViewModels
 
         //private readonly ApobData[] _channelsApobData;
 
-        private ApobData _apobData;
-        public ApobData ApobData
+        private ApobData _apobMainData;
+        public ApobData ApobMainData
         {
-            get => _apobData;
-            set { _apobData = value; OnPropertyChanged(); }
+            get => _apobMainData;
+            set => SetProperty(ref _apobMainData, value);
         }
 
         private ApobData _apobExtendedData;
         public ApobData ApobExtendedData
         {
             get => _apobExtendedData;
-            set { _apobExtendedData = value; OnPropertyChanged(); }
+            set => SetProperty(ref _apobExtendedData, value);
+        }
+
+
+        private ApobData _apobData;
+
+        public ApobData ApobData
+        {
+            get => _apobData;
+            set => SetProperty(ref _apobData, value);
+        }
+
+        //public ApobData ApobData
+        //{
+        //    get
+        //    {
+        //        if (ApobExtendedData != null 
+        //            && ApobExtendedData.ProcOdt != null 
+        //            && ApobExtendedData.ProcOdt.RawValue.Equals(ApobMainData.ProcOdt.RawValue))
+        //            return ApobExtendedData;
+        //        return ApobMainData;
+        //    }
+        //}
+
+        private CcdlData _ccdlData;
+        public CcdlData CcdlData
+        {
+            get => _ccdlData;
+            set => SetProperty(ref _ccdlData, value);
         }
 
         private float _swaAdcV;
         public float SwaAdcV
         {
             get => _swaAdcV;
-            set
-            {
-                _swaAdcV = value;
-                OnPropertyChanged("SwaAdcV");
-            }
+            set => SetProperty(ref _swaAdcV, value);
         }
 
         private float _swbAdcV;
         public float SwbAdcV
         {
             get => _swbAdcV;
-            set
-            {
-                _swbAdcV = value;
-                OnPropertyChanged("SwbAdcV");
-            }
+            set => SetProperty(ref _swbAdcV, value);
         }
 
         private float _vppAdcV;
         public float VppAdcV
         {
             get => _vppAdcV;
-            set
-            {
-                _vppAdcV = value;
-                OnPropertyChanged("VppAdcV");
-            }
+            set => SetProperty(ref _vppAdcV, value);
+        }
+
+        private float _apuVddio;
+        public float ApuVddio
+        {
+            get => _apuVddio;
+            set => SetProperty(ref _apuVddio, value);
+        }
+
+        private float _vsoc;
+        public float Vsoc
+        {
+            get => _vsoc;
+            set => SetProperty(ref _vsoc, value);
+        }
+
+        private float _vmisc;
+        public float Vmisc
+        {
+            get => _vmisc;
+            set => SetProperty(ref _vmisc, value);
         }
 
         private Ddr5PmicData _ddr5PmicData;
@@ -213,16 +244,14 @@ namespace ZenTimings.ViewModels
 
                 _ddr5PmicData = value;
 
-                if (PmicData.SwaAdcMv > 0)
-                    SwaAdcV = PmicData.SwaAdcMv / 1000.0f;
+                if (value.SwaAdcMv > 0)
+                    SwaAdcV = value.SwaAdcMv / 1000.0f;
 
-                if (PmicData.SwbAdcMv > 0)
-                    SwbAdcV = PmicData.SwbAdcMv / 1000.0f;
+                if (value.SwbAdcMv > 0)
+                    SwbAdcV = value.SwbAdcMv / 1000.0f;
 
-                if (PmicData.SwcAdcMv > 0)
-                    VppAdcV = PmicData.SwcAdcMv / 1000.0f;
-
-                //OnPropertyChanged("PmicData");
+                if (value.SwcAdcMv > 0)
+                    VppAdcV = value.SwcAdcMv / 1000.0f;
             }
         }
 
@@ -241,7 +270,7 @@ namespace ZenTimings.ViewModels
             Plugins = plugins;
 
             CpuName = VendorUtils.GetCpuNameString(CpuSingleton.Instance.systemInfo);
-            SmuVersion = CpuSingleton.Instance?.systemInfo?.SmuVersionString ?? "Unknown";
+            SmuVersion = CpuSingleton.Instance?.systemInfo?.SmuVersion.ToString() ?? "Unknown";
 
             TotalCapacity = CpuSingleton.Instance.GetMemoryConfig().TotalCapacity;
             MemoryType = memoryType;
@@ -252,11 +281,18 @@ namespace ZenTimings.ViewModels
             // APOB
             if (CpuSingleton.Instance.info.apob.IsAvailable)
             {
-                ApobData = CpuSingleton.Instance.info.apob.Data;
-                if (CpuSingleton.Instance.info.apob?.ExtendedData != null && CpuSingleton.Instance.info.apob.ExtendedData.ProcOdt != null)
-                    ApobExtendedData = CpuSingleton.Instance.info.apob.ExtendedData;
-                else
-                    ApobExtendedData = ApobData;
+                ApobMainData = CpuSingleton.Instance.info.apob.Data;
+                ApobExtendedData = CpuSingleton.Instance.info.apob?.ExtendedData;
+                CcdlData = CpuSingleton.Instance.info.apob.CcdlData;
+
+                // Uncomment the following lines to test APOB parsing from a debug report file instead of live data.
+                //string text = File.ReadAllText("debug_report.txt");
+                //Apob testApob = Apob.CreateFromDebugReport(text);
+                //ApobMainData = testApob.Data;
+                //ApobExtendedData = testApob?.ExtendedData;
+                //CcdlData = testApob.CcdlData;
+
+                ApobData = MergeApobData(ApobMainData, ApobExtendedData);
             }
 
             //AgesaVersion = AGESA_SEARCHING;
@@ -291,6 +327,103 @@ namespace ZenTimings.ViewModels
 
             // ECC
             ECC = SystemInfo.SMBios.MemoryDevices.Any(d => d.HasEcc);
+
+            // VDDIO / VSOC: prefer live SuperIO sensor readings, fall back to the static AOD table values.
+            RefreshSensors();
+        }
+
+        private static readonly string[] ApuVddioSensorNames = { "CPU VDDIO", "VDIMM", "VDDIO", "CPU VDDIO Memory" };
+        private static readonly string[] VsocSensorNames = { "CPU NB/SoC", "Vcore SoC", "VSOC", "VDDCR_SOC", "CPU SoC", "Northbridge/SoC" };
+        private static readonly string[] VmiscSensorNames = { "CPU MISC", "VMISC", "Vcore Misc", "VDD Misc" };
+
+        private bool _sensorsDetected;
+        private Sensor _apuVddioSensor;
+        private Sensor _vsocSensor;
+        private Sensor _vmiscSensor;
+
+        // Locates the relevant sensors once and caches them so subsequent refreshes don't need to search by name again.
+        private void DetectSensors()
+        {
+            var sensors = CpuSingleton.Instance?.systemInfo?.SensorGroups
+                .SelectMany(g => g.Sensors)
+                .ToList();
+
+            _apuVddioSensor = sensors?.FirstOrDefault(s => ApuVddioSensorNames.Contains(s.Name, StringComparer.OrdinalIgnoreCase));
+            _vsocSensor = sensors?.FirstOrDefault(s => VsocSensorNames.Contains(s.Name, StringComparer.OrdinalIgnoreCase));
+            _vmiscSensor = sensors?.FirstOrDefault(s => VmiscSensorNames.Contains(s.Name, StringComparer.OrdinalIgnoreCase));
+
+            _sensorsDetected = true;
+        }
+
+        // Call after CpuSingleton.Instance.systemInfo.UpdateSensors() to refresh the live sensor readings.
+        public void RefreshSensors()
+        {
+            if (!_sensorsDetected)
+                DetectSensors();
+
+            if (_apuVddioSensor?.Value != null)
+            {
+                ApuVddio = _apuVddioSensor.Value.Value;
+            }
+            else
+            {
+                var aodData = CpuSingleton.Instance.info.aod?.Table?.Data;
+                if (aodData?.ApuVddio != null)
+                    ApuVddio = aodData.ApuVddio.RawValue / 1000.0f;
+            }
+
+            if (_vsocSensor?.Value != null)
+            {
+                Vsoc = _vsocSensor.Value.Value;
+            }
+            else if (PowerTable != null)
+            {
+                Vsoc = PowerTable.VDDCR_SOC;
+            }
+
+            if (_vmiscSensor?.Value != null)
+            {
+                Vmisc = _vmiscSensor.Value.Value;
+            }
+            else if (PowerTable != null)
+            {
+                Vmisc = PowerTable.VDD_MISC;
+            }
+        }
+
+        private ApobData MergeApobData(ApobData main, ApobData extended)
+        {
+            if (extended == null)
+                return main;
+
+            var result = main;
+            var type = typeof(ApobData);
+            var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var p in props)
+            {
+                if (!p.CanRead || !p.CanWrite)
+                    continue;
+
+                var extendedVal = p.GetValue(extended);
+
+                // If extended has a non-null value and main prop is null, use extended's value.
+                if (extendedVal != null && p.GetValue(main) == null)
+                {
+                    p.SetValue(result, extendedVal);
+                    continue;
+                }
+
+                // If main has the property, use main's value.
+                var mainProp = type.GetProperty(p.Name, BindingFlags.Public | BindingFlags.Instance);
+                if (mainProp != null && mainProp.CanRead)
+                {
+                    var mainVal = main == null ? null : mainProp.GetValue(main);
+                    p.SetValue(result, mainVal);
+                }
+            }
+
+            return result;
         }
 
         bool IsMismatch(
@@ -385,17 +518,28 @@ namespace ZenTimings.ViewModels
                 font-weight: 500;
             }
 
-            tr.mismatch td {
-                background: #fff1f2;
+            tr.primary td {
+                background: #fffbeb;
             }
 
             tr.primary td:first-child {
-                color: #0f172a;
+                background: #fef3c7;
+                color: #b45309;
                 font-weight: 700;
             }
 
             tr.secondary td:first-child {
                 color: #475569;
+            }
+
+            tr.mismatch td {
+                background: #fff1f2;
+            }
+
+            tr.mismatch td:first-child {
+                background: #ffe4e6;
+                color: #be123c;
+                font-weight: 700;
             }
             </style>
             </head>
@@ -413,7 +557,7 @@ namespace ZenTimings.ViewModels
                 if (property.Name == "CpuId" || property.Name == "PatchLevel" || property.Name == "SmuTableVersion")
                     html += $"<tr><td>{property.Name}</td><td>{property.GetValue(cpu.systemInfo, null):X8}</td></tr>";
                 else if (property.Name == "SmuVersion")
-                    html += $"<tr><td>{property.Name}</td><td>{cpu.systemInfo.SmuVersionString}</td></tr>";
+                    html += $"<tr><td>{property.Name}</td><td>{cpu.systemInfo.SmuVersion}</td></tr>";
                 else if (property.Name == "Model" || property.Name == "ExtendedModel" || property.Name == "BaseModel")
                     html += $"<tr><td>{property.Name}</td><td>{property.GetValue(cpu.systemInfo, null)} (0x{property.GetValue(cpu.systemInfo, null):X})</td></tr>";
                 else if (property.Name != "SMBios")
@@ -439,11 +583,11 @@ namespace ZenTimings.ViewModels
                 .Where(p => p.GetIndexParameters().Length == 0)
                 .ToList();
 
-            var primaryTimings = new HashSet<string>
+            var primaryTimings = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             {
-                "tCL", "tRCD", "tRP", "tRAS", "tRC",
-                "tRRDS", "tRRDL", "tFAW",
-                "tCWL", "tWR"
+                "CL", "RCDWR", "RCDRD", "RP", "RAS", "RC",
+                "RRDS", "RRDL", "FAW",
+                "CWL", "WR"
             };
 
             // Timings
@@ -461,7 +605,8 @@ namespace ZenTimings.ViewModels
             foreach (var prop in timingProperties)
             {
                 bool mismatch = IsMismatch(prop, uniqueTimings);
-                string rowClass = mismatch ? " mismatch" : "";
+                bool isPrimary = primaryTimings.Contains(prop.Name);
+                string rowClass = mismatch ? "mismatch" : isPrimary ? "primary" : "secondary";
 
                 html += $"<tr class='{rowClass}'>";
                 html += $"<td>{prop.Name}</td>";

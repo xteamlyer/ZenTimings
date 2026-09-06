@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using ZenStates.Core;
-using ZenStates.Core.DRAM;
+using ZenStates.Core.Hardware;
+using ZenStates.Core.Hardware.Aod;
+using ZenStates.Core.Hardware.DRAM;
+using ZenStates.Core.OHWM;
 using static ZenTimings.BiosMemController;
 
 namespace ZenTimings.Windows
@@ -17,6 +19,13 @@ namespace ZenTimings.Windows
         {
             public string Name { get; set; }
             public string Value { get; set; }
+        }
+
+        private class TimingGridItem
+        {
+            public string PropertyName { get; set; }
+            public string[] Values { get; set; }
+            public bool IsMismatch { get; set; }
         }
 
         public SystemInfoWindow(MemoryConfig mc, Resistances? mcConfig, List<AsusSensorInfo> asusSensors)
@@ -39,7 +48,7 @@ namespace ZenTimings.Windows
                     if (property.Name == "CpuId" || property.Name == "PatchLevel" || property.Name == "SmuTableVersion")
                         items.Add(new GridItem() { Name = property.Name, Value = $"{property.GetValue(si, null):X8}" });
                     else if (property.Name == "SmuVersion")
-                        items.Add(new GridItem() { Name = property.Name, Value = si.SmuVersionString });
+                        items.Add(new GridItem() { Name = property.Name, Value = si.SmuVersion.ToString() });
                     else if (property.Name != "SMBios")
                         items.Add(new GridItem()
                         { Name = property.Name, Value = property.GetValue(si, null).ToString() });
@@ -63,13 +72,17 @@ namespace ZenTimings.Windows
                     .Select(g => g.First())
                     .ToList();
 
-                // Create dynamic object with properties for each timing column
                 var rows = props
                     .Where(p => p.Name != "Item")
-                    .Select(property => new
+                    .Select(property =>
                     {
-                        PropertyName = property.Name,
-                        Values = uniqueTimings.Select(t => t.Value[property.Name].ToString()).ToArray()
+                        var values = uniqueTimings.Select(t => $"{t.Value[property.Name]}").ToArray();
+                        return new TimingGridItem
+                        {
+                            PropertyName = property.Name,
+                            Values = values,
+                            IsMismatch = HasMismatch(values)
+                        };
                     })
                     .ToList();
 
@@ -80,24 +93,22 @@ namespace ZenTimings.Windows
                 {
                     MemCfgGrid.Columns.Clear();
 
-                    // Add property name column with default text color
                     var nameColumn = new System.Windows.Controls.DataGridTextColumn
                     {
                         Header = "Name",
                         Binding = new System.Windows.Data.Binding("PropertyName"),
-                        Foreground = (System.Windows.Media.Brush)this.FindResource("TextColor"),
+                        ElementStyle = (System.Windows.Style)this.FindResource("TimingNameTextStyle"),
                         Width = 150
                     };
                     MemCfgGrid.Columns.Add(nameColumn);
 
-                    // Add column for each unique timing with accent text color
                     for (int i = 0; i < uniqueTimings.Count; i++)
                     {
                         var valueColumn = new System.Windows.Controls.DataGridTextColumn
                         {
                             Header = $"DCT {uniqueTimings[i].Key >> 20}",
                             Binding = new System.Windows.Data.Binding($"Values[{i}]"),
-                            Foreground = (System.Windows.Media.Brush)this.FindResource("AccentTextColor")
+                            ElementStyle = (System.Windows.Style)this.FindResource("TimingValueTextStyle")
                         };
                         MemCfgGrid.Columns.Add(valueColumn);
                     }
@@ -172,6 +183,19 @@ namespace ZenTimings.Windows
             {
                 asusSensors
             };
+        }
+
+        private static bool HasMismatch(IReadOnlyList<string> values)
+        {
+            if (values == null || values.Count <= 1)
+                return false;
+
+            var first = values[0] ?? string.Empty;
+            for (int i = 1; i < values.Count; i++)
+                if (!string.Equals(first, values[i] ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+            return false;
         }
 
         private void AdonisWindow_Activated(object sender, EventArgs e)

@@ -1,5 +1,3 @@
-//#define BETA
-
 using AdonisUI.Controls;
 using System;
 using System.Collections.Generic;
@@ -9,6 +7,7 @@ using System.Linq;
 using System.Management;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
@@ -16,11 +15,16 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using ZenStates.Core;
-using ZenStates.Core.DRAM;
+using ZenStates.Core.Hardware;
+using ZenStates.Core.Hardware.Aod;
+using ZenStates.Core.Hardware.DRAM;
+using ZenStates.Core.OHWM;
 using ZenTimings.Controls;
+using ZenTimings.Helpers;
 using ZenTimings.Plugin;
 using ZenTimings.ViewModels;
 using ZenTimings.Windows;
+using static ZenTimings.Helpers.DriverCleaner;
 using Forms = System.Windows.Forms;
 using MessageBox = AdonisUI.Controls.MessageBox;
 using MessageBoxButton = AdonisUI.Controls.MessageBoxButton;
@@ -43,7 +47,8 @@ namespace ZenTimings
         private readonly AppSettings settings = AppSettings.Instance;
         private readonly List<IPlugin> plugins = new List<IPlugin>();
         private SystemInfoWindow siWnd = null;
-        private Windows.TelemetryWindow telemetryWnd = null;
+        private AdvancedTimingsWindow advancedTimingsWnd = null;
+        private SensorsWindow sensorsWindw = null;
         private OptionsDialog optionsWnd = null;
         private AboutDialog aboutWnd = null;
         internal readonly Forms.NotifyIcon _notifyIcon;
@@ -51,7 +56,6 @@ namespace ZenTimings
         private Control timingsPanel;
         private readonly MainViewModel mainViewModel;
         private float lastMclk = 0;
-        //private Computer computer;
 
         private readonly string AssemblyProduct = ((AssemblyProductAttribute)Attribute.GetCustomAttribute(
             Assembly.GetExecutingAssembly(),
@@ -132,7 +136,7 @@ namespace ZenTimings
 
                 if (cpu.info.family.Equals(Cpu.Family.UNSUPPORTED))
                 {
-                    throw new ApplicationException("CPU is not supported.");
+                    throw new ApplicationException("CPU family is not supported.");
                 }
                 else if (cpu.info.codeName.Equals(Cpu.CodeName.Unsupported))
                 {
@@ -155,6 +159,10 @@ namespace ZenTimings
 
                 InitializeComponent();
                 //SetResourceReference(NativeBorderBrushProperty, "WindowBorderColor");
+
+                SplashWindow.Loading("Sensors");
+                cpu.systemInfo.UpdateSensors();
+
                 SplashWindow.Loading("Memory modules");
                 ReadMemoryModulesInfo();
 
@@ -163,26 +171,14 @@ namespace ZenTimings
                 var memoryType = cpu.GetMemoryConfig().Type;
 
                 // Motherboard logo
+                SplashWindow.Loading("Resources");
                 var motherboardLogoName = VendorUtils.GetMotherboardLogo(cpu.systemInfo);
                 if (motherboardLogoName != null)
                 {
                     motherboardLogoImage.SetResourceReference(Image.SourceProperty, motherboardLogoName);
                 }
 
-                mainViewModel = new MainViewModel(
-                    ReadTimings(),
-                    memoryType,
-                    compatMode,
-                    settings,
-                    plugins,
-                    motherboardLogoName,
-                    GetAgesaVersion(),
-                    cpu.GetMemoryConfig()?.SpdInfo?.Values.FirstOrDefault(d => d.IsValid)?.PmicData ?? null
-                );
-
-                DataContext = mainViewModel;
-
-                if (cpu != null && settings.AdvancedMode)
+                if (settings.AdvancedMode)
                 {
 
                     PowerCfgTimer.Interval = TimeSpan.FromMilliseconds(settings.AutoRefreshInterval);
@@ -192,6 +188,12 @@ namespace ZenTimings
                     if (!WaitForPowerTable())
                     {
                         SplashWindow.Loading("Power table error!");
+                    }
+
+                    SplashWindow.Loading("IO Driver");
+                    if (!WaitForInpoutDriverLoad())
+                    {
+                        HandleError("I/O driver is not responding or not loaded.");
                     }
 
                     SplashWindow.Loading("Plugins");
@@ -214,16 +216,31 @@ namespace ZenTimings
                     }
                 }
 
+                mainViewModel = new MainViewModel(
+                    ReadTimings(),
+                    memoryType,
+                    compatMode,
+                    settings,
+                    plugins,
+                    motherboardLogoName,
+                    GetAgesaVersion(),
+                    cpu.GetMemoryConfig()?.SpdInfo?.Values.FirstOrDefault(d => d.IsValid)?.PmicData ?? null
+                );
+
+                DataContext = mainViewModel;
+
                 SplashWindow.Loading("Done");
 
                 AddTimingsPanel(memoryType);
 
+                // This blocks needs to be after the timings panel is added, because DDR4 still targets the actual elements for some of the timings
+                // TODO: Check if works now with the new MVVM approach
                 if (settings.AdvancedMode)
                 {
                     if (memoryType == MemType.DDR4 || memoryType == MemType.LPDDR4)
                     {
-                        ReadSVI();
                         ReadDDR4MemoryConfig();
+                        ReadSVI();
                     }
                     StartAutoRefresh();
                 }
@@ -295,7 +312,7 @@ namespace ZenTimings
 
             notifyIcon.MouseClick += NotifyIcon_MouseClick;
             notifyIcon.ContextMenuStrip = new Forms.ContextMenuStrip();
-            notifyIcon.ContextMenuStrip.Items.Add($"{AssemblyProduct} {AssemblyVersion}", null, OnAppContextMenuItemClick);
+            notifyIcon.ContextMenuStrip.Items.Add($"{AssemblyProduct} v{AssemblyVersion}", null, OnAppContextMenuItemClick);
             notifyIcon.ContextMenuStrip.Items.Add("-");
             notifyIcon.ContextMenuStrip.Items.Add("Exit", null, (object sender, EventArgs e) => ExitApplication());
 
@@ -323,12 +340,17 @@ namespace ZenTimings
             foreach (IPlugin plugin in plugins)
                 plugin?.Close();
 
+            sensorsWindw?.Close();
+            optionsWnd?.Close();
+
             _notifyIcon?.Dispose();
             AsusWmi?.Dispose();
-            //cpu?.io?.Close(settings.AutoUninstallDriver);
             cpu?.Dispose();
 
-            //Driver.Cleanup();
+            if (settings.AutoUninstallDriver)
+            {
+                App.CleanupDriverIfLastInstance((NotificationLevel)settings.AutoUninstallDriverNotificationLevel);
+            }
         }
 
         private void ExitApplication(bool save = true)
@@ -409,7 +431,7 @@ namespace ZenTimings
             /*
             foreach (var sensor in plugins[1].Sensors)
             {
-                Console.WriteLine($"----Name: {sensor.Name}, Value: {sensor.Value}");
+                Debug.WriteLine($"----Name: {sensor.Name}, Value: {sensor.Value}");
             }
             */
         }
@@ -434,59 +456,58 @@ namespace ZenTimings
 
                 string instanceName = WMI.GetInstanceName(scope, className);
 
-                ManagementObject classInstance = new ManagementObject(scope,
-                    $"{className}.InstanceName='{instanceName}'",
-                    null);
-
-                /* // Get possible values (index) of a memory option in BIOS
-                var dvaluesPack = WMI.InvokeMethodAndGetValue(classInstance, "Getdvalues", "pack", "ID", 0x20035);
-                if (dvaluesPack != null)
+                using (ManagementObject classInstance = new ManagementObject(scope, $"{className}.InstanceName='{instanceName}'", null))
                 {
-                    uint[] DValuesBuffer = (uint[])dvaluesPack.GetPropertyValue("DValuesBuffer");
-                    for (var i = 0; i < DValuesBuffer.Length; i++)
+                    /* // Get possible values (index) of a memory option in BIOS
+                    var dvaluesPack = WMI.InvokeMethodAndGetValue(classInstance, "Getdvalues", "pack", "ID", 0x20035);
+                    if (dvaluesPack != null)
                     {
-                        Debug.WriteLine("{0}", DValuesBuffer[i]);
-                    }
-                }*/
-
-                // Get function names with their IDs
-                var wmiFunctionsDict = AOD.GetWmiFunctions();
-                if (wmiFunctionsDict != null)
-                {
-                    foreach (var kvp in wmiFunctionsDict)
-                    {
-                        biosFunctions.Add(new BiosACPIFunction(kvp.Key, kvp.Value));
-                    }
-                }
-
-                // Get APCB config from BIOS. Holds memory parameters.
-                BiosACPIFunction cmd = GetFunctionByIdString("Get APCB Config");
-                if (cmd == null)
-                {
-                    // throw new Exception("Could not get memory controller config");
-                    // Use AOD table as an alternative path for now
-                    BMC.Table = cpu.info.aod.Table.RawAodTable;
-                }
-                else
-                {
-                    byte[] apcbConfig = WMI.RunCommand(classInstance, cmd.ID);
-                    // BiosACPIFunction cmd = new BiosACPIFunction("Get APCB Config", 0x00010001);
-                    cmd = GetFunctionByIdString("Get memory voltages");
-                    if (cmd != null)
-                    {
-                        byte[] voltages = WMI.RunCommand(classInstance, cmd.ID);
-
-                        // MEM_VDDIO is ushort, offset 27
-                        // MEM_VTT is ushort, offset 29
-                        for (int i = 27; i <= 30; i++)
+                        uint[] DValuesBuffer = (uint[])dvaluesPack.GetPropertyValue("DValuesBuffer");
+                        for (var i = 0; i < DValuesBuffer.Length; i++)
                         {
-                            byte value = voltages[i];
-                            if (value > 0)
-                                apcbConfig[i] = value;
+                            Debug.WriteLine("{0}", DValuesBuffer[i]);
+                        }
+                    }*/
+
+                    // Get function names with their IDs
+                    var wmiFunctionsDict = AOD.GetWmiFunctions();
+                    if (wmiFunctionsDict != null)
+                    {
+                        foreach (var kvp in wmiFunctionsDict)
+                        {
+                            biosFunctions.Add(new BiosACPIFunction(kvp.Key, kvp.Value));
                         }
                     }
 
-                    BMC.Table = apcbConfig ?? new byte[] { };
+                    // Get APCB config from BIOS. Holds memory parameters.
+                    BiosACPIFunction cmd = GetFunctionByIdString("Get APCB Config");
+                    if (cmd == null)
+                    {
+                        // throw new Exception("Could not get memory controller config");
+                        // Use AOD table as an alternative path for now
+                        BMC.Table = cpu.info.aod.Table.RawAodTable;
+                    }
+                    else
+                    {
+                        byte[] apcbConfig = WMI.RunCommand(classInstance, cmd.ID);
+                        // BiosACPIFunction cmd = new BiosACPIFunction("Get APCB Config", 0x00010001);
+                        cmd = GetFunctionByIdString("Get memory voltages");
+                        if (cmd != null)
+                        {
+                            byte[] voltages = WMI.RunCommand(classInstance, cmd.ID);
+
+                            // MEM_VDDIO is ushort, offset 27
+                            // MEM_VTT is ushort, offset 29
+                            for (int i = 27; i <= 30; i++)
+                            {
+                                byte value = voltages[i];
+                                if (value > 0)
+                                    apcbConfig[i] = value;
+                            }
+                        }
+
+                        BMC.Table = apcbConfig ?? new byte[] { };
+                    }
                 }
 
                 float vdimm = Convert.ToSingle(Convert.ToDecimal(BMC.Config.MemVddio) / 1000);
@@ -558,7 +579,7 @@ namespace ZenTimings
                     "Warning",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
-                Console.WriteLine(ex.Message);
+                Debug.WriteLine(ex.Message);
             }
 
             BMC?.Dispose();
@@ -569,10 +590,9 @@ namespace ZenTimings
         {
             cpu.memoryConfig.ReadTimings(offset);
             var timings = cpu.memoryConfig.Timings;
-            BaseDramTimings result = null;
 
             if (timings.Count == 0)
-                return result;
+                return null;
 
             var index = timings.FindIndex(m => m.Key.Equals(offset));
             return timings[index < 0 ? 0 : index].Value;
@@ -592,7 +612,7 @@ namespace ZenTimings
             //return result;
         }
 
-        private bool WaitForDriverLoad()
+        private bool WaitForInpoutDriverLoad()
         {
             Stopwatch timer = new Stopwatch();
             timer.Start();
@@ -602,7 +622,7 @@ namespace ZenTimings
             do
             {
                 temp = cpu.io.IsInpOutDriverOpen();
-            } while (!temp && timer.Elapsed.TotalMilliseconds < 10000);
+            } while (!temp && timer.Elapsed.TotalMilliseconds < 5000);
 
             timer.Stop();
 
@@ -617,45 +637,37 @@ namespace ZenTimings
                 return false;
             }
 
-            if (WaitForDriverLoad())
+            Stopwatch timer = new Stopwatch();
+            int timeout = 100000;
+
+            // TODO: Move to Core DLL
+            var memoryConfig = cpu.memoryConfig.Timings.FirstOrDefault().Value;
+            if (memoryConfig != null)
             {
-                Stopwatch timer = new Stopwatch();
-                int timeout = 100000;
-
-                // TODO: Move to Core DLL
-                var memoryConfig = cpu.memoryConfig.Timings.FirstOrDefault().Value;
-                if (memoryConfig != null)
-                {
-                    cpu.powerTable.ConfiguredClockSpeed = memoryConfig.Frequency;
-                    cpu.powerTable.MemRatio = memoryConfig.Ratio;
-                }
-
-                timer.Start();
-
-                SMU.Status status;
-                // Refresh each 200ms seconds until table is transferred to DRAM or timeout
-                do
-                {
-                    status = cpu.RefreshPowerTable();
-                    if (status != SMU.Status.OK)
-                        Thread.Sleep(200);  // It's ok to block the current thread
-                } while (status != SMU.Status.OK && timer.Elapsed.TotalMilliseconds < timeout);
-
-                timer.Stop();
-
-                if (status != SMU.Status.OK)
-                {
-                    HandleError("Could not get power table.\nSkipping.");
-                    return false;
-                }
-
-                return true;
+                cpu.powerTable.ConfiguredClockSpeed = memoryConfig.Frequency;
+                cpu.powerTable.MemRatio = memoryConfig.Ratio;
             }
-            else
+
+            timer.Start();
+
+            SMU.Status status;
+            // Refresh each 200ms seconds until table is transferred to DRAM or timeout
+            do
             {
-                HandleError("I/O driver is not responding or not loaded.");
+                status = cpu.RefreshPowerTable();
+                if (status != SMU.Status.OK)
+                    Thread.Sleep(200);  // It's ok to block the current thread
+            } while (status != SMU.Status.OK && timer.Elapsed.TotalMilliseconds < timeout);
+
+            timer.Stop();
+
+            if (status != SMU.Status.OK)
+            {
+                HandleError("Could not get power table.\nSkipping.");
                 return false;
             }
+
+            return true;
         }
 
         private void StartAutoRefresh()
@@ -673,12 +685,16 @@ namespace ZenTimings
                 PowerCfgTimer.Stop();
         }
 
+        private volatile bool isRefreshing = false;
         private void PowerCfgTimer_Tick(object sender, EventArgs e)
         {
-            // Run refresh operation in a new thread
-            try
+            if (isRefreshing) return;
+            isRefreshing = true;
+
+            // Run refresh operation in a new task
+            Task.Run(() =>
             {
-                new Thread(() =>
+                try
                 {
                     Thread.CurrentThread.IsBackground = true;
 
@@ -697,6 +713,8 @@ namespace ZenTimings
 
                     //ReadDDR4MemoryConfig();
                     cpu.RefreshPowerTable();
+                    cpu.systemInfo.UpdateSensors();
+
                     var voltagesUpdated = false;
                     if (cpu.memoryConfig?.SpdInfo?.Values != null)
                     {
@@ -719,18 +737,24 @@ namespace ZenTimings
                         if (voltagesUpdated)
                             mainViewModel.PmicData = cpu.memoryConfig.SpdInfo.Values.ElementAtOrDefault(comboBoxPartNumber?.SelectedIndex ?? 0)?.PmicData ?? null;
 
+                        mainViewModel.RefreshSensors();
+
                         lastMclk = newMclk;
 
                         ReadSVI();
                         // SetFrequencyString();
                         // RefreshSensors();
                     }));
-                }).Start();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-            }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine(ex.Message);
+                }
+                finally
+                {
+                    isRefreshing = false;
+                }
+            });
         }
 
         private ImageSource GetIcon(string iconSource, double width)
@@ -781,11 +805,6 @@ namespace ZenTimings
             MinimizeFootprint();
         }
 
-        private static void MinimizeFootprint()
-        {
-            InteropMethods.EmptyWorkingSet(Process.GetCurrentProcess().Handle);
-        }
-
         public void SetWindowTitle()
         {
             string AssemblyTitle = "ZT";
@@ -801,7 +820,7 @@ namespace ZenTimings
 
             Dispatcher.Invoke(() =>
             {
-                Title = $"{AssemblyTitle} {AssemblyVersion.Substring(0, AssemblyVersion.LastIndexOf('.'))}";
+                Title = $"{AssemblyTitle} v{AssemblyVersion.Substring(0, AssemblyVersion.LastIndexOf('.'))}";
 #if DEBUG && !BETA
                 if (settings.AdvancedMode)
                     Title += $@"{AssemblyVersion.Substring(AssemblyVersion.LastIndexOf('.'))} (debug)";
@@ -889,11 +908,15 @@ namespace ZenTimings
 
         private void AdonisWindow_StateChanged(object sender, EventArgs e)
         {
-            // Do not refresh if app is minimized
-            if (WindowState == WindowState.Minimized && (siWnd == null || !siWnd.IsLoaded))
+            // Do not refresh if app is minimized and sensors window is not open, to save CPU usage
+            if (WindowState == WindowState.Minimized && (sensorsWindw == null || !sensorsWindw.IsLoaded))
+            {
                 StopAutoRefresh();
+            }
             else if (WindowState == WindowState.Normal)
+            {
                 StartAutoRefresh();
+            }
 
             if (WindowState == WindowState.Minimized)
             {
@@ -926,11 +949,21 @@ namespace ZenTimings
             SetWindowTitle();
             //ShowWindow();
 
+            if (settings.StartMinimized)
+            {
+                WindowState = WindowState.Minimized;
+            }
+
             SplashWindow.Stop();
 
             Application.Current.MainWindow = this;
 
             this.Topmost = false;
+
+            if (settings.CheckForUpdates && SplashWindow.DeferUpdateCheck)
+            {
+                ((App)Application.Current).updater.CheckForUpdate(suppressNetworkErrorDialog: true);
+            }
 
             IntPtr handle = new WindowInteropHelper(Application.Current.MainWindow).Handle;
             HwndSource source = HwndSource.FromHwnd(handle);
@@ -947,6 +980,7 @@ namespace ZenTimings
                 settings.NotifiedChangelog = AssemblyVersion;
                 settings.Save();
             }
+
             //#endif
             //#if BETA
             //            MessageBox.Show("This is a BETA version of the application. Some functions might be working incorrectly.\n\n" +
@@ -954,8 +988,8 @@ namespace ZenTimings
             //#endif
             MinimizeFootprint();
 
-            if (settings.AutoOpenTelemetry && mainViewModel.IsDimmTelemetryAvailable)
-                TelemetryMonitorToolstripMenuItem_Click(this, null);
+            if (settings.AdvancedMode && settings.AutoOpenTelemetry)
+                OpenSensorsWindow(settings.StartMinimized);
 
             //new Thread(() =>
             //{
@@ -1029,7 +1063,8 @@ namespace ZenTimings
                 && settings?.SysInfoWindowHeight != 0
                 && settings?.SysInfoWindowWidth != 0
                 && settings?.SysInfoWindowLeft != -1
-                && settings?.SysInfoWindowTop != -1)
+                && settings?.SysInfoWindowTop != -1
+                && IsPositionOnScreen(settings.SysInfoWindowLeft, settings.SysInfoWindowTop, settings.SysInfoWindowWidth, settings.SysInfoWindowHeight))
             {
                 location = WindowStartupLocation.Manual;
                 sysInfoWindowLeft = settings.SysInfoWindowLeft;
@@ -1050,35 +1085,109 @@ namespace ZenTimings
             siWnd.Show();
         }
 
-        private void TelemetryMonitorToolstripMenuItem_Click(object sender, RoutedEventArgs e)
+        private void AdvancedTimingsToolstripMenuItem_Click(object sender, RoutedEventArgs e)
         {
-            if (!mainViewModel.IsDimmTelemetryAvailable)
-                return;
+            if (advancedTimingsWnd == null || !advancedTimingsWnd.IsLoaded)
+            {
+                advancedTimingsWnd = new AdvancedTimingsWindow
+                {
+                    Owner = this
+                };
+                advancedTimingsWnd.Show();
+            }
+            else
+            {
+                advancedTimingsWnd.Activate();
+            }
+        }
 
+        private void DumpApobTable_Click(object sender, RoutedEventArgs e)
+        {
             try
             {
-                double telemetryWindowWidth = 650;
-                double telemetryWindowHeight = 550;
-                double telemetryWindowTop = 0;
-                double telemetryWindowLeft = 0;
-                WindowStartupLocation location = WindowStartupLocation.CenterOwner;
-
-                if (settings.SaveWindowPosition
-                    && settings?.TelemetryWindowHeight != 0
-                    && settings?.TelemetryWindowWidth != 0
-                    && settings?.TelemetryWindowLeft != -1
-                    && settings?.TelemetryWindowTop != -1)
+                if (cpu?.info.apob == null || cpu.info.apob.RawTable == null)
                 {
-                    location = WindowStartupLocation.Manual;
-                    telemetryWindowLeft = settings.TelemetryWindowLeft;
-                    telemetryWindowTop = settings.TelemetryWindowTop;
-                    telemetryWindowHeight = settings.TelemetryWindowHeight;
-                    telemetryWindowWidth = settings.TelemetryWindowWidth;
+                    MessageBoxModel messageBox = new MessageBoxModel
+                    {
+                        Text = "APOB table is not available on this system.",
+                        Caption = "APOB Dump",
+                        Buttons = new[] { MessageBoxButtons.Ok() }
+                    };
+                    MessageBox.Show(messageBox);
+                    return;
                 }
 
-                if (telemetryWnd == null || !telemetryWnd.IsLoaded)
+                Forms.SaveFileDialog saveFileDialog = new Forms.SaveFileDialog
                 {
-                    telemetryWnd = new Windows.TelemetryWindow()
+                    Filter = "Binary files (*.bin)|*.bin|APOB files (*.apob)|*.apob|All files (*.*)|*.*",
+                    DefaultExt = "bin",
+                    FileName = $"APOB_{cpu.info.codeName}_{cpu.systemInfo.CpuId:X8}_{DateTime.Now:yyyyMMdd_HHmmss}.bin"
+                };
+
+                if (saveFileDialog.ShowDialog() == Forms.DialogResult.OK)
+                {
+                    try
+                    {
+                        File.WriteAllBytes(saveFileDialog.FileName, cpu.info.apob.RawTable);
+                        MessageBoxModel successBox = new MessageBoxModel
+                        {
+                            Text = $"APOB table successfully exported to:\n{saveFileDialog.FileName}",
+                            Caption = "APOB Dump",
+                            Buttons = new[] { MessageBoxButtons.Ok() }
+                        };
+                        MessageBox.Show(successBox);
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBoxModel errorBox = new MessageBoxModel
+                        {
+                            Text = $"Error writing file:\n{ex.Message}",
+                            Caption = "APOB Dump Error",
+                            Buttons = new[] { MessageBoxButtons.Ok() }
+                        };
+                        MessageBox.Show(errorBox);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBoxModel errorBox = new MessageBoxModel
+                {
+                    Text = $"Error during APOB dump:\n{ex.Message}",
+                    Caption = "APOB Dump Error",
+                    Buttons = new[] { MessageBoxButtons.Ok() }
+                };
+                MessageBox.Show(errorBox);
+            }
+        }
+
+        private void OpenSensorsWindow(bool startMinimized = false)
+        {
+            try
+            {
+                double telemetryWindowWidth = 390;
+                double telemetryWindowHeight = 625;
+                double telemetryWindowTop = 0;
+                double telemetryWindowLeft = 0;
+                WindowStartupLocation location = WindowStartupLocation.CenterScreen;
+
+                if (settings.SaveWindowPosition
+                    && settings?.SensorsWindowHeight != 0
+                    && settings?.SensorsWindowWidth != 0
+                    && settings?.SensorsWindowLeft != -1
+                    && settings?.SensorsWindowTop != -1
+                    && IsPositionOnScreen(settings.SensorsWindowLeft, settings.SensorsWindowTop, settings.SensorsWindowWidth, settings.SensorsWindowHeight))
+                {
+                    location = WindowStartupLocation.Manual;
+                    telemetryWindowLeft = settings.SensorsWindowLeft;
+                    telemetryWindowTop = settings.SensorsWindowTop;
+                    telemetryWindowHeight = settings.SensorsWindowHeight;
+                    telemetryWindowWidth = settings.SensorsWindowWidth;
+                }
+
+                if (sensorsWindw == null || !sensorsWindw.IsLoaded)
+                {
+                    sensorsWindw = new Windows.SensorsWindow()
                     {
                         Width = telemetryWindowWidth,
                         Height = telemetryWindowHeight,
@@ -1086,17 +1195,25 @@ namespace ZenTimings
                         Top = telemetryWindowTop,
                         Left = telemetryWindowLeft
                     };
-                    telemetryWnd.Show();
+                    sensorsWindw.Show();
+
+                    if (startMinimized)
+                        sensorsWindw.WindowState = WindowState.Minimized;
                 }
                 else
                 {
-                    telemetryWnd.Activate();
+                    sensorsWindw.Activate();
                 }
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Error opening Telemetry Monitor:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                MessageBox.Show($"Error opening Sensors window:\n{ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
             }
+        }
+
+        private void TelemetryMonitorToolstripMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            OpenSensorsWindow();
         }
 
         private void SpdInfoToolstripMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1131,37 +1248,43 @@ namespace ZenTimings
 
         private void MenuItem_Click(object sender, RoutedEventArgs e)
         {
-            Process.Start("https://www.paypal.com/donate/?hosted_button_id=NLSRLE9MVDPCW");
+            OpenUrl("https://www.paypal.com/donate/?hosted_button_id=NLSRLE9MVDPCW");
         }
 
         private void MenuItem_Click_1(object sender, RoutedEventArgs e)
         {
-            Process.Start("https://revolut.me/ivanrusanov");
+            OpenUrl("https://revolut.me/ivanrusanov");
         }
 
         private void MenuItem_Click_2(object sender, RoutedEventArgs e)
         {
-            Process.Start("https://discord.gg/8cfR3UZ");
+            OpenUrl("https://discord.gg/8cfR3UZ");
         }
 
         private void MenuItem_Click_3(object sender, RoutedEventArgs e)
         {
-            Process.Start("https://github.com/irusanov/ZenTimings");
+            OpenUrl("https://github.com/irusanov/ZenTimings");
         }
         private void MenuItem_Click_4(object sender, RoutedEventArgs e)
         {
-            Process.Start("https://docs.google.com/spreadsheets/d/12zg6yT_H7H-W1voyw1ZoIrj0GSE7WI4Ug-uLlv-Asa8/edit?gid=937453961#gid=937453961");
+            OpenUrl("https://docs.google.com/spreadsheets/d/12zg6yT_H7H-W1voyw1ZoIrj0GSE7WI4Ug-uLlv-Asa8/edit?gid=937453961#gid=937453961");
         }
 
         private void MenuItem_Click_6(object sender, RoutedEventArgs e)
         {
-            Process.Start("https://drive.google.com/drive/folders/1HAJO9_jxvQrIkLb4Ws9ZfKHcHFQ_yOqp?usp=sharing");
+            OpenUrl("https://drive.google.com/drive/folders/1HAJO9_jxvQrIkLb4Ws9ZfKHcHFQ_yOqp?usp=sharing");
+        }
+
+        private static void OpenUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+            using (Process.Start(url)) { }
         }
 
         private void ExportToolStripMenuItem_Click(object sender, RoutedEventArgs e)
         {
             //Config Config = new Config(cpu.memoryConfig, BMC.Config/*, cpu.powerTable*/);
-            //Console.WriteLine(Config.GetXML());
+            //Debug.WriteLine(Config.GetXML());
         }
 
         private void MotherboardLinkButton_Click(object sender, RoutedEventArgs e)
@@ -1192,6 +1315,20 @@ namespace ZenTimings
             return version;
         }
 
+        // Checks whether the given window rectangle is fully within the combined bounds of all
+        // monitors (the virtual screen). Used to detect saved positions that are no longer valid,
+        // e.g. after a monitor was disconnected or the display layout changed.
+        private static bool IsPositionOnScreen(double left, double top, double width, double height)
+        {
+            double virtualLeft = SystemParameters.VirtualScreenLeft;
+            double virtualTop = SystemParameters.VirtualScreenTop;
+            double virtualRight = virtualLeft + SystemParameters.VirtualScreenWidth;
+            double virtualBottom = virtualTop + SystemParameters.VirtualScreenHeight;
+
+            return left >= virtualLeft && top >= virtualTop &&
+                   left + width <= virtualRight && top + height <= virtualBottom;
+        }
+
         private void RestoreWindowPosition()
         {
             if (settings.SaveWindowPosition)
@@ -1201,23 +1338,9 @@ namespace ZenTimings
                     return;
                 }
 
-                WindowStartupLocation = WindowStartupLocation.Manual;
-
-                // Get the current screen bounds
-                System.Windows.Forms.Screen screen = System.Windows.Forms.Screen.FromHandle(new System.Windows.Interop.WindowInteropHelper(this).Handle);
-                System.Drawing.Rectangle screenBounds = screen.Bounds;
-
-                // Check if the saved window position is outside the screen bounds
-                if (settings.WindowLeft < screenBounds.Left || settings.WindowLeft + Width > screenBounds.Right ||
-                    settings.WindowTop < screenBounds.Top || settings.WindowTop + Height > screenBounds.Bottom)
+                if (IsPositionOnScreen(settings.WindowLeft, settings.WindowTop, Width, Height))
                 {
-                    // Reset the window position to a default value
-                    Left = (screenBounds.Width - Width) / 2 + screenBounds.Left;
-                    Top = (screenBounds.Height - Height) / 2 + screenBounds.Top;
-                }
-                else
-                {
-                    // Set the window position to the saved values
+                    WindowStartupLocation = WindowStartupLocation.Manual;
                     Left = settings.WindowLeft;
                     Top = settings.WindowTop;
                 }

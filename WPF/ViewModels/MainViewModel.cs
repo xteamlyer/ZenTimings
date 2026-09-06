@@ -164,17 +164,26 @@ namespace ZenTimings.ViewModels
             set => SetProperty(ref _apobExtendedData, value);
         }
 
+
+        private ApobData _apobData;
+
         public ApobData ApobData
         {
-            get
-            {
-                if (ApobExtendedData != null 
-                    && ApobExtendedData.ProcOdt != null 
-                    && ApobExtendedData.ProcOdt.RawValue.Equals(ApobMainData.ProcOdt.RawValue))
-                    return ApobExtendedData;
-                return ApobMainData;
-            }
+            get => _apobData;
+            set => SetProperty(ref _apobData, value);
         }
+
+        //public ApobData ApobData
+        //{
+        //    get
+        //    {
+        //        if (ApobExtendedData != null 
+        //            && ApobExtendedData.ProcOdt != null 
+        //            && ApobExtendedData.ProcOdt.RawValue.Equals(ApobMainData.ProcOdt.RawValue))
+        //            return ApobExtendedData;
+        //        return ApobMainData;
+        //    }
+        //}
 
         private CcdlData _ccdlData;
         public CcdlData CcdlData
@@ -272,16 +281,18 @@ namespace ZenTimings.ViewModels
             // APOB
             if (CpuSingleton.Instance.info.apob.IsAvailable)
             {
-                ApobMainData = CpuSingleton.Instance.info.apob.Data;
-                ApobExtendedData = CpuSingleton.Instance.info.apob?.ExtendedData;
-                CcdlData = CpuSingleton.Instance.info.apob.CcdlData;
+                //ApobMainData = CpuSingleton.Instance.info.apob.Data;
+                //ApobExtendedData = CpuSingleton.Instance.info.apob?.ExtendedData;
+                //CcdlData = CpuSingleton.Instance.info.apob.CcdlData;
 
                 // Uncomment the following lines to test APOB parsing from a debug report file instead of live data.
-                //string text = File.ReadAllText("debug_report.txt");
-                //Apob testApob = Apob.CreateFromDebugReport(text);
-                //ApobMainData = testApob.Data;
-                //ApobExtendedData = testApob?.ExtendedData;
-                //CcdlData = testApob.CcdlData;
+                string text = File.ReadAllText("debug_report.txt");
+                Apob testApob = Apob.CreateFromDebugReport(text);
+                ApobMainData = testApob.Data;
+                ApobExtendedData = testApob?.ExtendedData;
+                CcdlData = testApob.CcdlData;
+
+                ApobData = MergeApobData(ApobMainData, ApobExtendedData);
             }
 
             //AgesaVersion = AGESA_SEARCHING;
@@ -317,7 +328,7 @@ namespace ZenTimings.ViewModels
             // ECC
             ECC = SystemInfo.SMBios.MemoryDevices.Any(d => d.HasEcc);
 
-            // VDDIO / VSOC: prefer live SuperIO sensor readings, fall back to the static AOD table / power table values.
+            // VDDIO / VSOC: prefer live SuperIO sensor readings, fall back to the static AOD table values.
             RefreshSensors();
         }
 
@@ -378,6 +389,41 @@ namespace ZenTimings.ViewModels
             {
                 Vmisc = PowerTable.VDD_MISC;
             }
+        }
+
+        private ApobData MergeApobData(ApobData main, ApobData extended)
+        {
+            if (extended == null || extended.ProcOdt == null || !extended.ProcOdt.RawValue.Equals(main.ProcOdt.RawValue))
+                return main;
+
+            var result = main;
+            var type = typeof(ApobData);
+            var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+            foreach (var p in props)
+            {
+                if (!p.CanRead || !p.CanWrite)
+                    continue;
+
+                var extendedVal = p.GetValue(extended);
+
+                // If extended has a non-null value and main prop is null, use extended's value.
+                if (extendedVal != null && p.GetValue(main) == null)
+                {
+                    p.SetValue(result, extendedVal);
+                    continue;
+                }
+
+                // If main has the property, use main's value.
+                var mainProp = type.GetProperty(p.Name, BindingFlags.Public | BindingFlags.Instance);
+                if (mainProp != null && mainProp.CanRead)
+                {
+                    var mainVal = main == null ? null : mainProp.GetValue(main);
+                    p.SetValue(result, mainVal);
+                }
+            }
+
+            return result;
         }
 
         bool IsMismatch(

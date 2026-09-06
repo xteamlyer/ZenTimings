@@ -78,10 +78,6 @@
     <Reference Include="WindowsBase" />
     <Reference Include="PresentationCore" />
     <Reference Include="PresentationFramework" />
-    <Reference Include="ZenStates-Core, Version=1.80.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\Common\ZenStates-Core.dll</HintPath>
-    </Reference>
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">
@@ -449,6 +445,12 @@
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resources\PawnIO\PawnIO_setup.exe" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ZenStates-Core\ZenStates-Core.csproj">
+      <Project>{9aeaee9d-ef93-bd21-ffdd-e8f487c89803}</Project>
+      <Name>ZenStates-Core</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Target Name="ComputeVersionFromGit" BeforeTargets="PrepareForBuild">

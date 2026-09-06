@@ -28,12 +28,7 @@ namespace ZenTimings.Windows
             };
         }
 
-        private string Version =>
-            Assembly.GetExecutingAssembly()
-                    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-                    .InformationalVersion
-            ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-            ?? string.Empty;
+        private string Version => Assembly.GetExecutingAssembly().GetName().Version?.ToString().Replace(".0.0", "") ?? string.Empty;
 
         private void Hyperlink_RequestNavigate(object sender, System.Windows.Navigation.RequestNavigateEventArgs e)
         {

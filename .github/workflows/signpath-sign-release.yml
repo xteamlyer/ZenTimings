@@ -48,10 +48,10 @@ jobs:
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: 'f6b94766-123f-4577-a699-c091366c2d72'
-          project-slug: 'ZenTimings'
-          signing-policy-slug: 'release-signing'
-          artifact-configuration-slug: 'zentimings-release-configuration'
+          organization-id: '972c901f-3319-479d-a9fb-37aae12735f3'
+          project-slug: 'xteamlyer'
+          signing-policy-slug: 'xteamlyer'
+          artifact-configuration-slug: 'xteamlyer'
           github-artifact-id: '${{ steps.upload-unsigned-artifact.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'signed'
